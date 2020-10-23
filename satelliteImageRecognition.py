@@ -1,39 +1,26 @@
 import cv2 as cv
 import numpy as np
+import os
 
-INPUT_IMAGE = '05-abr-2016.jpg'
-
-def cleanUp(img):
-
-    greyImg = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
-    blur = cv.GaussianBlur(greyImg,(5,5),0)
-    ret, mask = cv.threshold(blur,0,255,cv.THRESH_BINARY+cv.THRESH_OTSU)
-
-    kernel = np.ones((5,5),np.uint8)
-    removedNoiseMask = cv.morphologyEx(greyImg, cv.MORPH_OPEN, kernel)
-
-    newImg = cv.bitwise_and(img, img, mask=removedNoiseMask)
-    
-    return newImg
+INPUT_IMAGE = 'new.png'
+INPUT_DIR = 'IMGS_SAT/'
 
 def cloud_extracting (img):
 
-    greyImg = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+    hsvImg = cv.cvtColor(img, cv.COLOR_BGR2HSV)
 
-    #ret,th1 = cv.threshold(img,200,255,cv.THRESH_BINARY_INV)
-    #ret2,th2 = cv.threshold(img,0,255,cv.THRESH_BINARY+cv.THRESH_OTSU)
-    #th2 = cv.adaptiveThreshold(img,255,cv.ADAPTIVE_THRESH_MEAN_C,cv.THRESH_BINARY,11,2)
-    #th3 = cv.adaptiveThreshold(img,255,cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY,11,2)
+    lower_cloud = np.array([0,0,10])
+    upper_cloud = np.array([360, 50, 255])
 
-    blur = cv.GaussianBlur(greyImg,(5,5),0)
-    ret, mask = cv.threshold(blur,0,255,cv.THRESH_BINARY+cv.THRESH_OTSU)
-
+    mask = cv.inRange(hsvImg, lower_cloud, upper_cloud)
     mask_inv = cv.bitwise_not(mask)
+
     newImg = cv.bitwise_and(img, img, mask=mask_inv)
 
-    return newImg
+    return newImg, mask, mask_inv
 
 def ocean_extracting (img): 
+
     hsvImg = cv.cvtColor(img, cv.COLOR_BGR2HSV)
 
     lower_blue = np.array([90,0,0])
@@ -46,6 +33,38 @@ def ocean_extracting (img):
 
     return newImg
 
+def image_overlap (imgDir):
+    base = cv.imread(imgDir + os.listdir(imgDir)[0], 1)
+
+    for file in os.listdir(imgDir):
+        if file != os.listdir(imgDir)[0]:
+            img = cv.imread(imgDir + file)
+            newImg, mask, mask_inv = cloud_extracting(base)
+
+            img_soma = cv.add(img, img, mask=mask)
+
+            bg = cv.bitwise_and(base, base, mask=mask_inv)
+            fg = cv.bitwise_and(img_soma, img_soma, mask=mask)
+
+            base = cv.add(bg, fg)
+
+    finalImg = ocean_extracting(base)
+    return finalImg
+
+def clustering (img):
+    pixels = img.reshape((-1,3))
+    pixels = np.float32(pixels)
+
+    criteria = (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 10, 1.0)
+    flag = cv.KMEANS_RANDOM_CENTERS
+    k = 5
+    ret, label, center = cv.kmeans(pixels, k, None, criteria, 10, flag)    
+    
+    center = np.uint8(center)
+    newImg = center[label.flatten()].reshape((img.shape))
+
+    return newImg
+
 if __name__ == "__main__":
     img = cv.imread(INPUT_IMAGE)
     cv.imshow('Original', cv.resize(img, (496,519), interpolation=cv.INTER_AREA))
@@ -53,13 +72,15 @@ if __name__ == "__main__":
     imgWithoutOcean = ocean_extracting(img)
     cv.imshow('Without Ocean', cv.resize(imgWithoutOcean, (496,519), interpolation=cv.INTER_AREA))
     
-    imgWithoutClouds = cloud_extracting(imgWithoutOcean)
+    imgWithoutClouds, mask, mask_inv = cloud_extracting(imgWithoutOcean)
     cv.imshow('Without Clouds', cv.resize(imgWithoutClouds, (496,519), interpolation=cv.INTER_AREA))
 
-    imgClean = cleanUp(imgWithoutClouds)
-    cv.imshow('Cleanup ', cv.resize(imgClean, (496,519), interpolation=cv.INTER_AREA))
+    clusteredImg = clustering(imgWithoutClouds)
+    cv.imshow('K-Means Clustering', cv.resize(clusteredImg, (496,519), interpolation=cv.INTER_AREA))
 
-    cv.imwrite(INPUT_IMAGE[:-4] + '_Clean.jpg', imgClean)
+    # finalImg = image_overlap(INPUT_DIR)
+
+    cv.imwrite('Final.jpg', clusteredImg)
     
     cv.waitKey(0)
     cv.destroyAllWindows()
